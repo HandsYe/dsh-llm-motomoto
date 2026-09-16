@@ -41,12 +41,13 @@ Route compat notes: the Responses protocol takes only `supportsDeveloperRole`, `
 
 ## Security notice
 
-The API key is never stored in this package. Provide it as the `MOTOMOTO_API_KEY` credential. Because a key was shared in chat while this plugin was being requested, rotate it before regular use.
+The API key is never stored in this package. Provide it as the `MOTOMOTO_API_KEY` credential.
 
 ## Install from this source directory
 
 ```powershell
-dsh plugin --profile desktop add "file:D:\开发项目\碎碎念\dsh-llm-motomoto"
+git clone https://github.com/HandsYe/dsh-llm-motomoto
+dsh plugin --profile desktop add "file:<克隆下来的仓库路径>"
 ```
 
 Then fully restart the desktop app. Verify the load:
