@@ -2,8 +2,9 @@
  * Tests over the bundle patch and package manifest, run with `node --test`.
  *
  * The patch is data, so what can rot is its agreement with the code beside it:
- * the provider route the adapter serves, the plugin row that loads the runtime
- * half, and the client metadata that gets the browser half injected.
+ * this bundle deliberately ships NO provider route (the route is the user
+ * settings layer's to own — the whole point of the rewrite), so the patch
+ * must load the runtime half and nothing else.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -22,7 +23,7 @@ function files(dir) {
   })
 }
 
-test('package is a DSH bundle with the provider patch and a web client', () => {
+test('package is a DSH bundle with the patch and a web client', () => {
   assert.equal(pkg.name, 'dsh-llm-motomoto')
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(pkg.exports['./client'], './lib/client.js')
@@ -33,27 +34,21 @@ test('package is a DSH bundle with the provider patch and a web client', () => {
   assert.equal(pkg.dsh.client.platform, 'web')
 })
 
-test('patch declares the expected Codex Responses route', () => {
-  assert.match(patch, /^- id: llm-pi-ai$/m)
-  assert.match(patch, /^      motomoto:$/m)
-  // The relay serves the OpenAI Responses API only; chat/completions hangs.
-  assert.match(patch, /^        api: openai-responses$/m)
-  assert.match(patch, /^        baseURL: https:\/\/motomoto\.lol\/v1$/m)
-  assert.match(patch, /^        apiKeyEnv: MOTOMOTO_API_KEY$/m)
-})
-
-test('patch declares only gpt-5.6-terra and does not embed authorization', () => {
-  assert.match(patch, /^          - id: gpt-5\.6-terra$/m)
-  assert.doesNotMatch(patch, /^\s+(?:authorization|apiKey):/mi)
-  assert.doesNotMatch(patch, /Bearer\s+/i)
-})
-
-test('patch inserts the plugin row so the settings section actually loads', () => {
+test('the patch loads the runtime half and declares no provider route', () => {
   // The plugins tab dispatches a card only for namespaces the Host serves, and
   // the Host serves llm-motomoto only when this row loads the runtime half.
   assert.match(patch, /^- insert:$/m)
   assert.match(patch, /^    - id: llm-motomoto$/m)
   assert.match(patch, /^      name: dsh-llm-motomoto$/m)
+  // The provider route lives in the user settings layer, not in this bundle.
+  assert.doesNotMatch(patch, /^- id: llm-pi-ai$/m, 'the patch must not declare an llm-pi-ai base')
+  assert.doesNotMatch(patch, /baseURL:/, 'the patch must not name an endpoint')
+  assert.doesNotMatch(patch, /^\s+motomoto:/m, 'the patch must not declare the motomoto route')
+})
+
+test('the patch embeds no authorization', () => {
+  assert.doesNotMatch(patch, /^\s+(?:authorization|apiKey):/mi)
+  assert.doesNotMatch(patch, /Bearer\s+/i)
 })
 
 test('repository contains no secret-shaped literal', () => {

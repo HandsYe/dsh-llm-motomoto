@@ -1,7 +1,7 @@
 {
   "name": "dsh-llm-motomoto",
-  "version": "0.3.0",
-  "description": "DeepSeek Harness bundle for MotoMoto's OpenAI-compatible endpoint: a pi-ai provider route plus a status card in Settings - Plugins.",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness bundle for the MotoMoto relay (Codex-only OpenAI Responses): the outbound request compatibility the relay requires, plus a status card in Settings - Plugins. The provider route itself lives in the user settings layer.",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -56,4 +56,3 @@
     "react-test-renderer": "18.3.1"
   }
 }
-

@@ -57,7 +57,7 @@ function loadBundle() {
 
 /**
  * A settings scope stub with the contract's snapshot shape, carrying a
- * resolved llm-pi-ai section that serves one motomoto route.
+ * resolved llm-pi-ai section that serves the user's live motomoto route.
  * @param {object} overrides - snapshot fields overriding the ready defaults.
  * @returns {object} the scope stub.
  */
@@ -69,11 +69,12 @@ function stubScope(overrides = {}) {
         motomoto: {
           displayName: 'MotoMoto',
           apiKeyEnv: 'MOTOMOTO_API_KEY',
-          api: 'openai-completions',
+          api: 'openai-responses',
           baseURL: 'https://motomoto.lol/v1',
           models: [
-            { id: 'gpt-5.6-terra', name: 'GPT 5.6 Terra' },
-            { id: 'gpt-5.5' },
+            { id: 'gpt-5.5', name: 'GPT 5.5' },
+            { id: 'gpt-5.6-sol' },
+            { id: 'codex-auto-review' },
           ],
         },
       },
@@ -186,8 +187,9 @@ test('the card renders the live route read-only', async () => {
     assert.ok(labels.includes(key), `the ${key} row is labelled`)
   }
   const ids = tree.root.findAll((node) => node.type === 'code').map((node) => node.props.children)
-  assert.ok(ids.includes('gpt-5.6-terra'), 'the model ids are listed')
-  assert.ok(ids.includes('gpt-5.5'))
+  for (const id of ['gpt-5.5', 'gpt-5.6-sol', 'codex-auto-review']) {
+    assert.ok(ids.includes(id), `model ${id} is listed`)
+  }
   assert.equal(
     tree.root.findAll((node) => node.type === 'input').length,
     0,
