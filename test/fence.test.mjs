@@ -17,7 +17,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { Config, apply, name } from '../lib/index.js'
+import { Config, apply, name, plain } from '../lib/index.js'
 
 /** A recording stand-in for the fetch the fence wraps. */
 function recordingFetch() {
@@ -103,7 +103,9 @@ async function fencedStream(upstream, contentType, drive) {
 
 test('the plugin exports its stable name and resolves defaults', () => {
   assert.equal(name, 'llm-motomoto')
-  const config = Config({})
+  // `plain` is the same read the fence performs: live fields resolve to the
+  // value in force, not to the reference the harness keeps them behind.
+  const config = plain(Config({}))
   assert.equal(config.host, 'motomoto.lol')
   assert.match(config.userAgent, /^codex_cli_rs\//, 'the default identity is the Codex CLI')
   assert.equal(config.originator, 'codex_cli_rs')
@@ -121,7 +123,7 @@ test('a relay request is rewritten to the Codex identity, body untouched', async
   })
   assert.equal(calls.length, 1)
   const headers = calls[0].init.headers
-  assert.equal(headers.get('user-agent'), Config({}).userAgent)
+  assert.equal(headers.get('user-agent'), plain(Config({})).userAgent)
   assert.equal(headers.get('originator'), 'codex_cli_rs')
   assert.equal(headers.get('content-type'), 'application/json')
   assert.equal(calls[0].init.body, '{"model":"gpt-5.5","stream":true}')
@@ -151,20 +153,22 @@ test('a relay URL object and a Request both carry the identity', async () => {
     await fencedFetch(request)
   })
   assert.equal(calls.length, 2)
-  assert.equal(calls[0].init.headers.get('user-agent'), Config({}).userAgent)
+  assert.equal(calls[0].init.headers.get('user-agent'), plain(Config({})).userAgent)
   const request = calls[1].input
   assert.ok(request instanceof Request, 'the Request is re-created so its headers change')
-  assert.equal(request.headers.get('user-agent'), Config({}).userAgent)
+  assert.equal(request.headers.get('user-agent'), plain(Config({})).userAgent)
   assert.equal(request.headers.get('originator'), 'codex_cli_rs')
   assert.equal(request.method, 'POST')
 })
 
 test('an empty originator omits the header; extra headers set and clear; the host is configuration', async () => {
-  const config = Config({
-    originator: '',
-    host: 'relay.example.net',
-    headers: { version: '0.118.0', session_id: 'abc', 'x-stainless-lang': '' },
-  })
+  const config = plain(
+    Config({
+      originator: '',
+      host: 'relay.example.net',
+      headers: { version: '0.118.0', session_id: 'abc', 'x-stainless-lang': '' },
+    }),
+  )
   const { calls } = await fenced(config, async (fencedFetch) => {
     await fencedFetch('https://relay.example.net/v1/responses', {
       headers: { originator: 'stale', 'x-stainless-lang': 'js', session_id: 'stale' },
@@ -231,7 +235,7 @@ test('a Request body carrying a rejected field is rebuilt without it', async () 
   const sent = JSON.parse(await calls[0].input.clone().text())
   assert.equal('max_output_tokens' in sent, false)
   assert.equal(sent.model, 'gpt-5.5')
-  assert.equal(calls[0].input.headers.get('user-agent'), Config({}).userAgent)
+  assert.equal(calls[0].input.headers.get('user-agent'), plain(Config({})).userAgent)
 })
 
 test('an SSE response closes locally after a CRLF terminal event', async () => {
@@ -243,6 +247,20 @@ test('an SSE response closes locally after a CRLF terminal event', async () => {
   })
   const text = await fencedStream(hanging, 'text/event-stream')
   assert.equal(text, terminal, 'the terminal frame is forwarded, then the stream ends')
+})
+
+test('a Chat Completions SSE stream closes after the [DONE] sentinel', async () => {
+  const frames = [
+    'data: {"choices":[{"delta":{"content":"connected"},"finish_reason":null}]}\n\n',
+    'data: [DONE]\n\n',
+  ].join('')
+  const hanging = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(frames))
+    },
+  })
+  const text = await fencedStream(hanging, 'text/event-stream')
+  assert.equal(text, frames, 'the OpenAI sentinel is forwarded before local stream termination')
 })
 
 test('an SSE response closes after a failed event; earlier frames are forwarded first', async () => {
@@ -272,15 +290,21 @@ test('a bare SSE error event closes the stream', async () => {
   assert.equal(text, frames)
 })
 
-test('a terminal event carried only in the data payload closes the stream', async () => {
-  const frames = 'data: {"type":"response.cancelled"}\n\n'
+test('non-terminal done/cancelled events do not hide the parser terminal event', async () => {
+  const frames = [
+    'event: response.done\ndata: {"type":"response.done"}\n\n',
+    'event: response.cancelled\ndata: {"type":"response.cancelled"}\n\n',
+    'event: response.completed\ndata: {"type":"response.completed"}\n\n',
+  ].join('')
   const hanging = new ReadableStream({
     start(controller) {
+      // A single burst makes sure the transform drains past the non-terminal
+      // frames and only closes after pi-ai's recognized terminal event.
       controller.enqueue(new TextEncoder().encode(frames))
     },
   })
   const text = await fencedStream(hanging, 'text/event-stream')
-  assert.equal(text, frames)
+  assert.equal(text, frames, 'the parser terminal frame must not be truncated')
 })
 
 test('a non-SSE response passes through as the same object', async () => {
@@ -317,4 +341,68 @@ test('an upstream close without a terminal event forwards the tail bytes', async
   })
   const text = await fencedStream(closing, 'text/event-stream')
   assert.equal(text, complete + partial, 'a clean upstream close keeps ordinary pass-through behavior')
+})
+
+test('a live field edit takes effect with no installSection and no re-apply', async () => {
+  // The dsh >= 0.1.7 posture: the settings service has no `installSection`, so
+  // an edit reaches the running plugin only through the live reference the
+  // Loader handed `apply`. Every knob the fence reads must therefore be marked
+  // live AND read through the reference on each use.
+  const { calls, native } = recordingFetch()
+  const previous = globalThis.fetch
+  globalThis.fetch = native
+  const raw = { host: 'motomoto.lol', announce: false }
+  const entry = Config(raw)
+  const disposers = []
+  const ctx = {
+    disposers,
+    effect: (register) => {
+      const dispose = register()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    },
+    inject: (_services, callback) => callback({ settings: {}, effect: (fn) => disposers.push(fn() ?? (() => {})) }),
+    logger: { info: () => {}, warn: () => {} },
+  }
+  apply(ctx, entry)
+  try {
+    await globalThis.fetch('https://motomoto.lol/v1/responses', { headers: { 'user-agent': 'deepseek-harness/0.1.2-rc.1' } })
+    assert.equal(calls.at(-1).init.headers.get('originator'), 'codex_cli_rs')
+
+    // Commit an edit the way the Loader does: write into the live reference.
+    raw.host = 'relay.example.net'
+    const next = Config(raw)
+    for (const [key, value] of Object.entries(next)) {
+      if (typeof entry[key]?.get === 'function' && typeof value?.get === 'function') {
+        entry[key][Symbol.for('cosmokit.volatile.write')](value.get())
+      }
+    }
+
+    await globalThis.fetch('https://relay.example.net/v1/responses', { headers: { 'user-agent': 'deepseek-harness/0.1.2-rc.1' } })
+    assert.equal(
+      calls.at(-1).init.headers.get('originator'),
+      'codex_cli_rs',
+      'the fence follows the host the user just switched to',
+    )
+    await globalThis.fetch('https://motomoto.lol/v1/responses')
+    assert.equal(calls.at(-1).init, undefined, 'the former host now passes through untouched')
+  } finally {
+    for (const dispose of disposers) dispose()
+    globalThis.fetch = previous
+  }
+})
+
+test('every user-facing preference field is marked live so the Plugins page can serve it', () => {
+  // dsh 0.1.7 dropped `installSection` and derives the form from this schema;
+  // a field without the mark is not merely read-only there, it is absent.
+  const json = Config.toJSON()
+  const nodeOf = (node) => (typeof node === 'number' ? json.refs[node] : node)
+  const root = nodeOf(json.uid)
+  const marked = Object.entries(root.dict ?? {})
+    .filter(([, ref]) => nodeOf(ref)?.meta?.volatile === true)
+    .map(([key]) => key)
+  assert.deepEqual(
+    marked.sort(),
+    ['headers', 'host', 'originator', 'stripBodyParams', 'userAgent'],
+    'the identity knobs must all be reachable',
+  )
 })

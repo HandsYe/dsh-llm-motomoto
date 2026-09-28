@@ -1,21 +1,19 @@
 /**
- * Live MotoMoto probe. Not part of the test suite.
+ * Live MotoMoto Chat Completions probe. Not part of the test suite.
  *
- * Sends one request shaped exactly the way a real DSH agent turn is — system
- * prompt as an input item, one tool, reasoning with a summary, the encrypted
- * reasoning include, and the max_output_tokens field the fence must strip —
- * first directly with the Codex identity (raw), then through the plugin's own
- * fence (fenced), and reports what each layer actually put on the wire.
+ * Sends a small streaming chat turn to the endpoint currently advertised by
+ * MotoMoto. It can run raw or through this bundle's fetch fence, and reports
+ * status, SSE termination, and returned text without printing credentials.
  *
  * Usage: node test/live-probe.mjs [raw|fenced] [model] [effort]
  */
 import { readFileSync } from 'node:fs'
-import { Config, apply } from '../lib/index.js'
+import { Config, apply, plain } from '../lib/index.js'
 
 const mode = process.argv[2] ?? 'fenced'
-const model = process.argv[3] ?? 'gpt-5.5'
+const model = process.argv[3] ?? 'gpt-5.6-sol'
 const effort = process.argv[4] ?? 'high'
-const BASE = 'https://motomoto.lol/v1/responses'
+const BASE = 'https://motomoto.lol/v1/chat/completions'
 
 function loadMotoMotoKey() {
   const text = readFileSync(process.env.USERPROFILE + '/.dsh/.credentials.yaml', 'utf8')
@@ -54,34 +52,18 @@ function stubContext() {
   }
 }
 
-/**
- * The request a real DSH turn makes, as pi-ai's openai-responses API builds it:
- * the system prompt as the first input item (role system while the route sets
- * supportsDeveloperRole false), a Responses-shaped tool, reasoning with a
- * summary plus the encrypted reasoning include, and max_output_tokens — the
- * field the backend rejects and the fence must delete.
- */
+/** Build a minimal OpenAI Chat Completions streaming request. */
 function fullSizeBody() {
   return JSON.stringify({
     model,
-    input: [
+    messages: [
       { role: 'system', content: 'You are a coding agent running inside DeepSeek Harness. Be terse.' },
-      { role: 'user', content: [{ type: 'input_text', text: 'Reply with exactly: OK' }] },
+      { role: 'user', content: 'Reply with exactly: connected' },
     ],
+    max_tokens: 64,
+    reasoning_effort: effort,
     stream: true,
-    store: false,
-    max_output_tokens: 32768,
-    tools: [
-      {
-        type: 'function',
-        name: 'get_time',
-        description: 'Get the current time',
-        parameters: { type: 'object', properties: {}, required: [] },
-        strict: false,
-      },
-    ],
-    reasoning: { effort, summary: 'auto' },
-    include: ['reasoning.encrypted_content'],
+    stream_options: { include_usage: true },
   })
 }
 
@@ -137,11 +119,21 @@ async function probe(label, fetchFn, body) {
       buffer = buffer.slice(sep.index + sep[0].length)
       frames++
       const ev = frame.match(/^event:\s*(\S+)/m)?.[1] ?? null
-      const delta = frame.match(/"delta"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1]
-      if (ev === 'response.output_text.delta' && delta !== undefined) lastDelta = delta
-      if (ev && /response\.(completed|incomplete|failed|cancelled|done)/.test(ev) && terminal === null) terminal = ev
+      const payload = frame.match(/^data:\s*(.+)$/m)?.[1]
+      if (payload === '[DONE]') {
+        if (terminal === null) terminal = '[DONE]'
+      } else if (payload !== undefined) {
+        try {
+          const data = JSON.parse(payload)
+          const delta = data.choices?.[0]?.delta?.content
+          if (typeof delta === 'string') lastDelta += delta
+        } catch {
+          // A malformed frame is left visible in the event count, not fatal to the probe.
+        }
+      }
+      if (ev && /^(?:response\.(?:completed|incomplete|failed)|error)$/.test(ev) && terminal === null) terminal = ev
       if (frames <= 4 || (terminal !== null && frames % 20 === 0)) {
-        console.log(`[${label}] ${t()} frame#${frames} event=${ev}`)
+        console.log(`[${label}] ${t()} frame#${frames} event=${ev ?? (payload === '[DONE]' ? '[DONE]' : null)}`)
       }
     }
   }
@@ -174,7 +166,7 @@ if (mode === 'fenced') {
     headers: {
       authorization: `Bearer ${key}`,
       'content-type': 'application/json',
-      'user-agent': Config({}).userAgent,
+      'user-agent': plain(Config({})).userAgent,
       originator: 'codex_cli_rs',
     },
     body,

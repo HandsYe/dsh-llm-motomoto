@@ -3,8 +3,8 @@
 # already live in the user settings layer — the `llm-pi-ai:` section of
 # ~/.dsh/settings.yaml. dsh-settings resolves that section from the user
 # layer alone when a bundle ships no base, so this patch contributes exactly
-# one thing: the runtime half that installs the outbound compatibility the
-# Codex-only relay requires (the identity fence in lib/index.js).
+# one thing: the runtime half that installs outbound identity and SSE
+# compatibility for the relay (the fence in lib/index.js).
 - insert:
     - id: llm-motomoto
       name: dsh-llm-motomoto

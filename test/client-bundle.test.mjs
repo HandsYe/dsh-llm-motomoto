@@ -113,21 +113,45 @@ test('the bundle registers under its package id and declares the services it use
   const { registered, exports } = loadBundle()
   assert.equal(registered.id, 'dsh-llm-motomoto', 'the id must match the package name the Host scans')
   assert.equal(typeof exports.apply, 'function')
-  assert.deepEqual(exports.inject, ['slots', 'locale', 'settingsScope'])
+  assert.deepEqual(
+    exports.inject,
+    ['slots', 'locale'],
+    'a declared service no provider supplies leaves the fiber inactive, which fails the whole renderer boot',
+  )
   assert.equal(
     exports.SETTINGS_NS,
     'llm-motomoto',
-    'the tab dispatches cards by settings namespace the Host half registers',
+    'the browser half must address the namespace the Host half registers',
   )
   assert.equal(exports.ROUTE_NS, 'llm-pi-ai', 'the card reports the route where the adapter serves it')
+  assert.equal(
+    exports.BUNDLE_NAME,
+    'dsh-llm-motomoto',
+    'the keyed configuration seat dispatches by bundle package name',
+  )
 })
 
-test('apply registers one card keyed on the settings namespace, bound to the route namespace', () => {
-  const { exports } = loadBundle()
-  const registrations = []
+/**
+ * Run `apply` against a stub page offering exactly one settings binder.
+ *
+ * The real runtime hands a plugin `ctx.inject(services, callback)`, which runs
+ * the callback once (and only while) the named service is provided; a service
+ * nothing provides never runs it. That is what keeps `settingsScope` out of the
+ * static inject list without costing the card.
+ *
+ * @param {object} exports_ - the loaded bundle.
+ * @param {string | undefined} binder - the service the page provides, or none.
+ * @returns {{injections: string[], registrations: object[], bound: object[]}} what apply did.
+ */
+function applyWithBinder(exports_, binder) {
   const injections = []
+  const registrations = []
   const bound = []
-  exports.apply({
+  const services = {
+    configForms: { get: (id) => ({ kind: 'form', id }) },
+    settingsScope: { bind: (spec) => ({ kind: 'scope', spec }) },
+  }
+  const surface = {
     effect: (fn) => fn(),
     locale: {
       register: (ns, dictionaries) => {
@@ -136,7 +160,6 @@ test('apply registers one card keyed on the settings namespace, bound to the rou
       },
       bind: (ns) => (key) => `${ns}:${key}`,
     },
-    settingsScope: { bind: (spec) => bound.push(spec) },
     slots: {
       inject: (name, callback) => {
         injections.push(name)
@@ -147,16 +170,62 @@ test('apply registers one card keyed on the settings namespace, bound to the rou
         return () => {}
       },
     },
+  }
+  exports_.apply({
+    ...surface,
+    inject: (names, callback) => {
+      if (binder !== undefined && names.includes(binder)) {
+        callback({ ...surface, [binder]: services[binder] })
+      }
+    },
   })
-  assert.deepEqual(injections, ['settings.plugin.item'], 'the card joins the plugin configuration tab')
-  assert.equal(registrations.length, 1)
-  assert.equal(registrations[0].key, 'llm-motomoto', 'the tab dispatches cards by settings namespace')
-  const scopeBind = bound.find((entry) => entry.locales === undefined)
-  assert.equal(scopeBind.namespace, 'llm-pi-ai', 'the card reads the live route from the adapter section')
+  return { injections, registrations, bound }
+}
+
+test('apply exposes the route card in Settings and the bundle page on dsh >= 0.1.7', () => {
+  const { exports } = loadBundle()
+  const { injections, registrations, bound } = applyWithBinder(exports, 'configForms')
+  assert.deepEqual(injections, ['plugins.bundle.config', 'settings.section'], 'both navigation surfaces can show the card')
+  assert.equal(registrations.length, 2)
+  const section = registrations.find((entry) => entry.name === 'settings.section')
+  assert.equal(section.id, 'llm-motomoto', 'Settings selects sections by list id')
+  assert.equal(section.key, undefined, 'Settings is a list slot, not a keyed bundle slot')
+  assert.equal(section.label(), 'settings.motomoto:title', 'the navigation exposes the localized relay title')
+  assert.equal(section.inject().scope, registrations[0].inject().scope, 'both pages share the same live route form')
+  assert.equal(
+    registrations[0].key,
+    'dsh-llm-motomoto',
+    'the keyed seat dispatches by bundle package name, not by settings namespace',
+  )
+  assert.equal(registrations[0].inject().scope.id, 'llm-pi-ai', 'the card reads the live route from the adapter entry')
   assert.deepEqual(
     bound.find((entry) => entry.locales !== undefined).locales.sort(),
     ['en', 'zh'],
     'both dictionaries ship with the card',
+  )
+})
+
+test('apply still registers into the older plugin-item seat when that is all the page offers', () => {
+  const { exports } = loadBundle()
+  const { injections, registrations } = applyWithBinder(exports, 'settingsScope')
+  assert.deepEqual(injections, ['settings.plugin.item'], 'the older page renders cards in the plugin tab')
+  assert.equal(registrations.length, 1)
+  assert.equal(registrations[0].key, 'llm-motomoto', 'the older seat dispatches by settings namespace')
+  assert.equal(
+    registrations[0].inject().scope.spec.namespace,
+    'llm-pi-ai',
+    'the card reads the live route from the adapter section',
+  )
+})
+
+test('a page with no settings plane still boots the plugin', () => {
+  const { exports } = loadBundle()
+  const { injections, registrations, bound } = applyWithBinder(exports, undefined)
+  assert.deepEqual(injections, [], 'no card is contributed without a form to bind')
+  assert.deepEqual(registrations, [])
+  assert.ok(
+    bound.find((entry) => entry.locales !== undefined) !== undefined,
+    'the dictionaries are still registered, so the fence half boots normally',
   )
 })
 
