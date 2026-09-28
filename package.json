@@ -1,6 +1,6 @@
 {
   "name": "dsh-llm-motomoto",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DeepSeek Harness bundle for the MotoMoto relay: outbound identity and SSE compatibility plus a status card in Settings and the Plugins detail page. The provider route itself lives in the user settings layer.",
   "license": "MIT",
   "type": "module",
