@@ -36,7 +36,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-settings": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-settings": "^0.1.2-rc.1 || 0.2.0-rc.2",
     "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
